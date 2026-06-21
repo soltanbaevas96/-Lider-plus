@@ -11,10 +11,21 @@ const ADMIN_PIN = "2468"; // сменить при необходимости
 const GRADES = ["9 класс", "10 класс", "11 класс", "Колледж"];
 
 // Консультанты. id используется в ключах базы — латиницей, не менять после запуска.
+// whatsapp — номер в международном формате без + и пробелов (для ссылки wa.me).
 const CONSULTANTS = [
-  { id: "symbat",   name: "Нурмади Сымбат Сунгаткызы",      short: "Сымбат",   role: "Профориентация" },
-  { id: "aigerim",  name: "Оразбекова Айгерим Алтынбековна", short: "Айгерим",  role: "Профориентация" },
+  { id: "symbat",   name: "Нурмади Сымбат Сунгаткызы",      short: "Сымбат",   role: "Профориентация", whatsapp: "77479048949" },
+  { id: "aigerim",  name: "Оразбекова Айгерим Алтынбековна", short: "Айгерим",  role: "Профориентация", whatsapp: "77778905810" },
 ];
+
+// Данные образовательного центра
+const CENTER = {
+  name: "Лидер Плюс",
+  address: "ул. Академика Маргулана, 197/2, Павлодар (1–2 этаж)",
+  lat: 52.273132,
+  lng: 76.944613,
+  mapLink: "https://2gis.kz/pavlodar/firm/70000001104381000",
+  routeLink: "https://2gis.kz/pavlodar/directions/points/%7C76.944613%2C52.273132%3B70000001104381000",
+};
 
 const INK = "#1a1a1a", GOLD = "#d9a86c", PAPER = "#faf8f4";
 
@@ -126,12 +137,61 @@ export default function App() {
 
       <main style={S.main}>
         {view === "client"
-          ? <ClientView schedules={schedules} bookings={bookings} reload={reload} />
+          ? <><ClientView schedules={schedules} bookings={bookings} reload={reload} /><OfficeBlock /></>
           : <AdminView schedules={schedules} bookings={bookings} reload={reload} />}
       </main>
 
       <footer style={S.footer}>«Лидер Плюс» · Профориентация · запись онлайн</footer>
     </div>
+  );
+}
+
+// ── Блок офиса: карта + контакты ──────────────────────────────────────
+function MapPin() {
+  // Схематичная карта с меткой — рисуется локально, не зависит от внешних сервисов
+  return (
+    <svg viewBox="0 0 400 280" style={S.mapFrame} preserveAspectRatio="xMidYMid slice" aria-label="Схема расположения">
+      <rect width="400" height="280" fill="#eef1ec" />
+      {/* дороги */}
+      <path d="M0 90 H400 M0 200 H400 M120 0 V280 M280 0 V280" stroke="#dfe3dc" strokeWidth="14" />
+      <path d="M0 90 H400 M0 200 H400 M120 0 V280 M280 0 V280" stroke="#fff" strokeWidth="3" />
+      {/* кварталы */}
+      <rect x="135" y="105" width="130" height="80" fill="#e4e8e0" rx="4" />
+      <rect x="20" y="105" width="85" height="80" fill="#e4e8e0" rx="4" />
+      <rect x="295" y="105" width="85" height="80" fill="#e4e8e0" rx="4" />
+      {/* метка офиса */}
+      <g transform="translate(200,145)">
+        <ellipse cx="0" cy="34" rx="13" ry="4" fill="rgba(0,0,0,.15)" />
+        <path d="M0 32 C0 32 -22 6 -22 -10 A22 22 0 1 1 22 -10 C22 6 0 32 0 32 Z" fill={GOLD} stroke={INK} strokeWidth="2" />
+        <circle cx="0" cy="-10" r="8" fill={INK} />
+      </g>
+    </svg>
+  );
+}
+function OfficeBlock() {
+  return (
+    <section style={S.office}>
+      <div style={S.officeHead}>Где проходят консультации</div>
+      <div style={S.officeGrid}>
+        <a href={CENTER.mapLink} target="_blank" rel="noopener noreferrer" style={S.mapWrap}>
+          <MapPin />
+          <span style={S.mapOverlay}>Открыть в 2ГИС</span>
+        </a>
+        <div style={S.officeInfo}>
+          <div style={S.officeAddrLabel}>Адрес</div>
+          <div style={S.officeAddr}>{CENTER.address}</div>
+          <a href={CENTER.routeLink} target="_blank" rel="noopener noreferrer" style={S.routeBtn}>Построить маршрут в 2ГИС</a>
+
+          <div style={{ ...S.officeAddrLabel, marginTop: 22 }}>WhatsApp консультантов</div>
+          {CONSULTANTS.map((c) => (
+            <a key={c.id} href={`https://wa.me/${c.whatsapp}`} target="_blank" rel="noopener noreferrer" style={S.waContact}>
+              <span style={S.waContactIcon}>✆</span>
+              <span><b>{c.short}</b><br /><span style={S.waContactNum}>+{c.whatsapp}</span></span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -191,6 +251,16 @@ function ClientView({ schedules, bookings, reload }) {
   };
 
   if (done) {
+    const waText = encodeURIComponent(
+      `Здравствуйте, ${done.consultant.short}!\n\n` +
+      `Записался(ась) на консультацию по профориентации.\n` +
+      `Дата: ${done.date.getDate()} ${MONTHS[done.date.getMonth()]}, ${done.slot}\n` +
+      `Класс: ${done.grade}\n` +
+      `Имя: ${done.name}\n` +
+      `Телефон: ${done.phone}` +
+      (done.topic ? `\nЗапрос: ${done.topic}` : "")
+    );
+    const waLink = `https://wa.me/${done.consultant.whatsapp}?text=${waText}`;
     return (
       <div style={S.cardCenter}>
         <div style={S.successIcon}>✓</div>
@@ -204,7 +274,10 @@ function ClientView({ schedules, bookings, reload }) {
           <Row label="Телефон" value={done.phone} />
           {done.topic && <Row label="Запрос" value={done.topic} />}
         </div>
-        <p style={S.confNote}>Сохраните дату. Чтобы перенести запись — свяжитесь с центром.</p>
+        <p style={S.confNote}>Подтвердите запись в WhatsApp — консультант получит ваши данные.</p>
+        <a href={waLink} target="_blank" rel="noopener noreferrer" style={S.btnWhatsapp}>
+          <span style={S.waIcon}>✆</span> Подтвердить в WhatsApp
+        </a>
         <button style={S.btnGhost} onClick={reset}>Записать ещё</button>
       </div>
     );
@@ -496,6 +569,8 @@ const S = {
   input: { width: "100%", boxSizing: "border-box", marginTop: 6, padding: "11px 13px", borderRadius: 11, border: "1.5px solid #e4e0d8", fontSize: 14.5, color: INK, background: "#fdfcfa", outline: "none" },
   btnPrimary: { width: "100%", padding: 13, borderRadius: 12, border: "none", background: INK, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer" },
   btnGhost: { width: "100%", padding: 12, borderRadius: 12, border: "1.5px solid #e4e0d8", background: "#fff", color: INK, fontSize: 14.5, fontWeight: 600, cursor: "pointer", marginTop: 8 },
+  btnWhatsapp: { display: "flex", alignItems: "center", justifyContent: "center", gap: 9, width: "100%", boxSizing: "border-box", padding: 14, borderRadius: 12, border: "none", background: "#25D366", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", textDecoration: "none", marginBottom: 8 },
+  waIcon: { fontSize: 18, transform: "rotate(0deg)" },
   errBox: { background: "#fdecec", color: "#c0392b", padding: "9px 12px", borderRadius: 10, fontSize: 13, fontWeight: 500, margin: "0 0 12px" },
   empty: { color: "#9a9488", fontSize: 14, lineHeight: 1.5 },
 
@@ -528,6 +603,19 @@ const S = {
   dowChipOn: { background: INK, color: GOLD, borderColor: INK },
   hintBox: { fontSize: 12.5, color: "#9a9488", background: "#faf8f3", padding: "10px 13px", borderRadius: 10, margin: "4px 0 18px", lineHeight: 1.5 },
   savedNote: { textAlign: "center", color: "#0a7", fontSize: 13.5, fontWeight: 600, marginTop: 12 },
+  office: { maxWidth: 1080, margin: "8px auto 0", padding: "0 20px" },
+  officeHead: { fontSize: 20, fontWeight: 800, letterSpacing: "-.02em", marginBottom: 16, textAlign: "center" },
+  officeGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 18, alignItems: "stretch" },
+  mapWrap: { position: "relative", borderRadius: 18, overflow: "hidden", border: "1px solid #ece8e0", minHeight: 280, background: "#eee", display: "block", textDecoration: "none" },
+  mapFrame: { width: "100%", height: "100%", minHeight: 280, objectFit: "cover", border: "none", display: "block" },
+  mapOverlay: { position: "absolute", bottom: 12, right: 12, background: INK, color: GOLD, fontSize: 13, fontWeight: 700, padding: "8px 14px", borderRadius: 10 },
+  officeInfo: { background: "#fff", borderRadius: 18, padding: 24, border: "1px solid #ece8e0", boxShadow: "0 2px 16px rgba(0,0,0,.04)" },
+  officeAddrLabel: { fontSize: 12.5, fontWeight: 700, color: "#9a9488", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 },
+  officeAddr: { fontSize: 16, fontWeight: 600, lineHeight: 1.4, marginBottom: 14 },
+  routeBtn: { display: "inline-block", padding: "10px 16px", borderRadius: 11, background: INK, color: GOLD, fontSize: 14, fontWeight: 700, textDecoration: "none" },
+  waContact: { display: "flex", alignItems: "center", gap: 12, padding: "11px 13px", borderRadius: 12, background: "#f3faf5", border: "1px solid #d6efdd", textDecoration: "none", color: INK, marginTop: 9 },
+  waContactIcon: { width: 36, height: 36, borderRadius: "50%", background: "#25D366", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flex: "0 0 auto" },
+  waContactNum: { fontSize: 13.5, color: "#1a8a45", fontWeight: 600 },
   loadWrap: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: PAPER },
   spinner: { width: 34, height: 34, border: "3px solid #e4e0d8", borderTopColor: INK, borderRadius: "50%", animation: "spin .7s linear infinite" },
 };
