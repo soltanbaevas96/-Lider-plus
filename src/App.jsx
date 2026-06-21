@@ -44,7 +44,9 @@ const normPhone = (s) => {
   return d;
 };
 
-const DEFAULT_SCHEDULE = { workdays: { 0: true, 1: true, 2: true, 3: true, 4: true, 5: false, 6: false }, start: "10:00", end: "18:00" };
+// Расписание = словарь по датам: { "2026-06-25": { start, end, breakStart, breakEnd } }.
+// breakStart/breakEnd необязательны (перерыв/обед). Пустой словарь = нет рабочих дней.
+const DEFAULT_SCHEDULE = { days: {} };
 
 // ── Слой данных: Supabase, а если ключи не вписаны — локальный режим ───
 const local = {
@@ -54,11 +56,16 @@ const local = {
 };
 
 const db = {
+  // приводим любое расписание к новому формату { days: {...} }
+  normSchedule(raw) {
+    if (raw && raw.days && typeof raw.days === "object") return raw;
+    return { days: {} }; // старый формат (workdays/start/end) или пусто → начинаем с чистого листа
+  },
   async loadSchedules() {
-    if (!supaReady) { const o = {}; CONSULTANTS.forEach(c => o[c.id] = local.get(`sched_${c.id}`, DEFAULT_SCHEDULE)); return o; }
+    if (!supaReady) { const o = {}; CONSULTANTS.forEach(c => o[c.id] = this.normSchedule(local.get(`sched_${c.id}`, null))); return o; }
     const { data } = await supabase.from("schedules").select("consultant_id,data");
-    const o = {}; CONSULTANTS.forEach(c => o[c.id] = DEFAULT_SCHEDULE);
-    (data || []).forEach(r => { o[r.consultant_id] = r.data; });
+    const o = {}; CONSULTANTS.forEach(c => o[c.id] = { days: {} });
+    (data || []).forEach(r => { o[r.consultant_id] = this.normSchedule(r.data); });
     return o;
   },
   async saveSchedule(cid, data) {
@@ -272,9 +279,18 @@ function OfficeBlock() {
 }
 
 function slotsForDate(date, schedule) {
-  if (!schedule || !schedule.workdays[isoDow(date)]) return [];
-  const s = parseHM(schedule.start), e = parseHM(schedule.end), out = [];
-  for (let m = s; m + SLOT_MIN <= e; m += SLOT_MIN) out.push(toHM(m));
+  const day = schedule && schedule.days ? schedule.days[ymd(date)] : null;
+  if (!day) return [];
+  const s = parseHM(day.start), e = parseHM(day.end);
+  const bs = day.breakStart ? parseHM(day.breakStart) : null;
+  const be = day.breakEnd ? parseHM(day.breakEnd) : null;
+  const hasBreak = bs != null && be != null && be > bs;
+  const out = [];
+  for (let m = s; m + SLOT_MIN <= e; m += SLOT_MIN) {
+    // пропускаем слоты, пересекающиеся с перерывом
+    if (hasBreak && m < be && m + SLOT_MIN > bs) continue;
+    out.push(toHM(m));
+  }
   return out;
 }
 
@@ -294,8 +310,11 @@ function ClientView({ schedules, bookings, reload }) {
   const consultant = CONSULTANTS.find(c => c.id === cid);
   const schedule = cid ? schedules[cid] : null;
 
+  // показываем открытые дни до конца следующего месяца
+  const horizon = new Date(today.getFullYear(), today.getMonth() + 2, 0); // последний день след. месяца
+  const horizonDays = Math.ceil((horizon - today) / 86400000) + 1;
   const days = [];
-  if (schedule) for (let i = 0; i < 28; i++) {
+  if (schedule) for (let i = 0; i < horizonDays; i++) {
     const d = new Date(today); d.setDate(today.getDate() + i);
     if (slotsForDate(d, schedule).length) days.push(d);
   }
@@ -592,39 +611,128 @@ function BookingList({ cid, bookings, reload }) {
 }
 
 function SettingsView({ cid, schedule, reload }) {
-  const [s, setS] = useState(schedule);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const [days, setDays] = useState((schedule && schedule.days) || {});
+  const [monthOffset, setMonthOffset] = useState(0); // 0 = текущий, 1 = следующий
+  const [editKey, setEditKey] = useState(null);       // выбранная дата для редактирования
   const [saved, setSaved] = useState(false);
-  useEffect(() => { setS(schedule); }, [cid, schedule]);
+  useEffect(() => { setDays((schedule && schedule.days) || {}); }, [cid, schedule]);
+
   const times = [];
   for (let m = 6 * 60; m <= 22 * 60; m += 30) times.push(toHM(m));
-  const save = async () => {
-    if (parseHM(s.end) <= parseHM(s.start)) return;
-    await db.saveSchedule(cid, s); await reload(); setSaved(true); setTimeout(() => setSaved(false), 2000);
+
+  // календарная сетка выбранного месяца
+  const base = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const year = base.getFullYear(), month = base.getMonth();
+  const firstDow = isoDow(new Date(year, month, 1));     // 0=Пн
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+
+  const persist = async (nextDays) => {
+    setDays(nextDays);
+    await db.saveSchedule(cid, { days: nextDays });
+    await reload();
+    setSaved(true); setTimeout(() => setSaved(false), 1500);
   };
+
+  const toggleDay = (date) => {
+    const key = ymd(date);
+    const next = { ...days };
+    if (next[key]) { delete next[key]; if (editKey === key) setEditKey(null); }
+    else { next[key] = { start: "10:00", end: "18:00", breakStart: "", breakEnd: "" }; setEditKey(key); }
+    persist(next);
+  };
+
+  const updateDay = (key, patch) => {
+    const next = { ...days, [key]: { ...days[key], ...patch } };
+    persist(next);
+  };
+
+  const monthName = `${["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"][month]} ${year}`;
+  const ed = editKey ? days[editKey] : null;
+  const slotCount = (day) => {
+    if (!day) return 0;
+    const s = parseHM(day.start), e = parseHM(day.end);
+    const bs = day.breakStart ? parseHM(day.breakStart) : null, be = day.breakEnd ? parseHM(day.breakEnd) : null;
+    const hasB = bs != null && be != null && be > bs;
+    let n = 0;
+    for (let m = s; m + SLOT_MIN <= e; m += SLOT_MIN) { if (hasB && m < be && m + SLOT_MIN > bs) continue; n++; }
+    return n;
+  };
+
   return (
     <div style={S.card}>
-      <div style={S.stepHead}>Настройка приёма</div>
-      <div style={S.subLabel}>Рабочие дни</div>
-      <div style={S.dowRow}>
-        {DAYS.map((d, i) => (
-          <button key={i} onClick={() => setS({ ...s, workdays: { ...s.workdays, [i]: !s.workdays[i] } })}
-            style={{ ...S.dowChip, ...(s.workdays[i] ? S.dowChipOn : {}) }}>{d}</button>
-        ))}
+      <div style={S.stepHead}>Рабочие дни и часы</div>
+      <p style={S.hintBox}>Нажмите на число, чтобы открыть приём в этот день. Для каждого дня можно задать свои часы и перерыв. Повторное нажатие — закрыть день.</p>
+
+      {/* переключатель месяца */}
+      <div style={S.monthNav}>
+        <button style={S.monthBtn} disabled={monthOffset === 0} onClick={() => { setMonthOffset(0); setEditKey(null); }}>← Текущий</button>
+        <div style={S.monthTitle}>{monthName}</div>
+        <button style={S.monthBtn} disabled={monthOffset === 1} onClick={() => { setMonthOffset(1); setEditKey(null); }}>Следующий →</button>
       </div>
-      <div style={{ display: "flex", gap: 14 }}>
-        <label style={{ ...S.lab, flex: 1 }}>Начало
-          <select style={S.input} value={s.start} onChange={(e) => setS({ ...s, start: e.target.value })}>
-            {times.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </label>
-        <label style={{ ...S.lab, flex: 1 }}>Окончание
-          <select style={S.input} value={s.end} onChange={(e) => setS({ ...s, end: e.target.value })}>
-            {times.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </label>
+
+      {/* календарь */}
+      <div style={S.calDow}>{DAYS.map(d => <div key={d} style={S.calDowCell}>{d}</div>)}</div>
+      <div style={S.calGrid}>
+        {cells.map((date, i) => {
+          if (!date) return <div key={`e${i}`} />;
+          const key = ymd(date);
+          const open = !!days[key];
+          const past = date < today;
+          const isEd = editKey === key;
+          return (
+            <button key={key} disabled={past}
+              onClick={() => { if (open && !isEd) setEditKey(key); else toggleDay(date); }}
+              style={{ ...S.calCell, ...(open ? S.calCellOpen : {}), ...(isEd ? S.calCellEdit : {}), ...(past ? S.calCellPast : {}) }}>
+              {date.getDate()}
+            </button>
+          );
+        })}
       </div>
-      <p style={S.hintBox}>Слоты по 30 минут создаются автоматически. С {s.start} до {s.end} — {Math.max(0, Math.floor((parseHM(s.end) - parseHM(s.start)) / 30))} слотов в день.</p>
-      <button style={S.btnPrimary} onClick={save}>Сохранить</button>
+
+      {/* редактор выбранного дня */}
+      {ed && (
+        <div style={S.dayEditor}>
+          <div style={S.dayEditorHead}>
+            {new Date(editKey + "T00:00").getDate()} {["янв","фев","мар","апр","мая","июн","июл","авг","сен","окт","ноя","дек"][new Date(editKey + "T00:00").getMonth()]} — часы приёма
+          </div>
+          <div style={{ display: "flex", gap: 12 }}>
+            <label style={{ ...S.lab, flex: 1, marginBottom: 10 }}>Начало
+              <select style={S.input} value={ed.start} onChange={(e) => updateDay(editKey, { start: e.target.value })}>
+                {times.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <label style={{ ...S.lab, flex: 1, marginBottom: 10 }}>Окончание
+              <select style={S.input} value={ed.end} onChange={(e) => updateDay(editKey, { end: e.target.value })}>
+                {times.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          </div>
+          <div style={S.subLabel}>Перерыв / обед (необязательно)</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+            <label style={{ ...S.lab, flex: 1, marginBottom: 0 }}>С
+              <select style={S.input} value={ed.breakStart || ""} onChange={(e) => updateDay(editKey, { breakStart: e.target.value })}>
+                <option value="">—</option>
+                {times.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <label style={{ ...S.lab, flex: 1, marginBottom: 0 }}>До
+              <select style={S.input} value={ed.breakEnd || ""} onChange={(e) => updateDay(editKey, { breakEnd: e.target.value })}>
+                <option value="">—</option>
+                {times.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          </div>
+          {parseHM(ed.end) <= parseHM(ed.start)
+            ? <div style={S.errBox}>Окончание должно быть позже начала.</div>
+            : <p style={{ ...S.hintBox, marginTop: 14 }}>В этот день будет {slotCount(ed)} слотов по 30 минут.</p>}
+          <button style={{ ...S.btnGhost, marginTop: 4 }} onClick={() => toggleDay(new Date(editKey + "T00:00"))}>Закрыть приём в этот день</button>
+        </div>
+      )}
+
       {saved && <div style={S.savedNote}>✓ Сохранено</div>}
     </div>
   );
@@ -725,9 +833,18 @@ const S = {
   bookTopic: { fontSize: 13, color: "#6b665a", marginTop: 3, lineHeight: 1.4 },
   cancelBtn: { width: 32, height: 32, borderRadius: 9, border: "1.5px solid #f0d4d0", background: "#fff", color: "#c0392b", fontSize: 14, cursor: "pointer", flex: "0 0 auto" },
 
-  dowRow: { display: "flex", gap: 7, marginBottom: 20, flexWrap: "wrap" },
-  dowChip: { width: 44, height: 44, borderRadius: 11, border: "1.5px solid #e4e0d8", background: "#fff", fontSize: 13.5, fontWeight: 700, color: "#bbb", cursor: "pointer" },
-  dowChipOn: { background: INK, color: GOLD, borderColor: INK },
+  monthNav: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14 },
+  monthBtn: { padding: "8px 12px", borderRadius: 10, border: "1.5px solid #e4e0d8", background: "#fff", fontSize: 13, fontWeight: 600, color: INK, cursor: "pointer" },
+  monthTitle: { fontSize: 15, fontWeight: 700, textTransform: "capitalize", textAlign: "center", flex: 1 },
+  calDow: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 5, marginBottom: 5 },
+  calDowCell: { textAlign: "center", fontSize: 11.5, fontWeight: 700, color: "#9a9488" },
+  calGrid: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 5 },
+  calCell: { aspectRatio: "1", borderRadius: 10, border: "1.5px solid #ece8e0", background: "#fff", fontSize: 14, fontWeight: 600, color: INK, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 },
+  calCellOpen: { background: "#e6f6ee", borderColor: "#9fdcbb", color: "#0a7a4a", fontWeight: 800 },
+  calCellEdit: { background: INK, color: GOLD, borderColor: INK },
+  calCellPast: { background: "#f5f3ee", color: "#ccc6ba", cursor: "not-allowed", borderColor: "#f0ede6" },
+  dayEditor: { marginTop: 18, padding: 16, borderRadius: 14, background: "#faf8f3", border: "1px solid #ece8e0" },
+  dayEditorHead: { fontSize: 14.5, fontWeight: 700, marginBottom: 14 },
   hintBox: { fontSize: 12.5, color: "#9a9488", background: "#faf8f3", padding: "10px 13px", borderRadius: 10, margin: "4px 0 18px", lineHeight: 1.5 },
   savedNote: { textAlign: "center", color: "#0a7", fontSize: 13.5, fontWeight: 600, marginTop: 12 },
   office: { maxWidth: 560, margin: "8px auto 0", padding: "0 20px" },
