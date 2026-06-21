@@ -143,9 +143,9 @@ export default function App() {
       <header style={S.header}>
         <LogoWordmark />
         <div style={S.navTabs}>
-          <button onClick={() => setView("client")} style={{ ...S.navTab, ...(view === "client" ? S.navTabActive : {}) }}>Запись</button>
-          <button onClick={() => setView("my")} style={{ ...S.navTab, ...(view === "my" ? S.navTabActive : {}) }}>Моя запись</button>
-          <button onClick={() => setView("admin")} style={{ ...S.navTab, ...(view === "admin" ? S.navTabActive : {}) }}>Кабинет</button>
+          <button onClick={() => { setView("client"); window.scrollTo({ top: 0 }); }} style={{ ...S.navTab, ...(view === "client" ? S.navTabActive : {}) }}>Запись</button>
+          <button onClick={() => { setView("my"); window.scrollTo({ top: 0 }); }} style={{ ...S.navTab, ...(view === "my" ? S.navTabActive : {}) }}>Моя запись</button>
+          <button onClick={() => { setView("admin"); window.scrollTo({ top: 0 }); }} style={{ ...S.navTab, ...(view === "admin" ? S.navTabActive : {}) }}>Кабинет</button>
         </div>
       </header>
 
@@ -324,7 +324,7 @@ function ClientView({ schedules, bookings, reload }) {
   const isTaken = (d, slot) => !!bookings[`${cid}|${ymd(d)} ${slot}`];
   const isPast = (d, slot) => { const dt = new Date(d); const [h, m] = slot.split(":").map(Number); dt.setHours(h, m, 0, 0); return dt <= now; };
 
-  const reset = () => { setDone(null); setCid(null); setContract(null); setGrade(null); setSelDate(null); setSelSlot(null); setForm({ name: "", phone: "", topic: "" }); setErr(""); };
+  const reset = () => { setDone(null); setCid(null); setContract(null); setGrade(null); setSelDate(null); setSelSlot(null); setForm({ name: "", phone: "", topic: "" }); setErr(""); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
   const submit = async () => {
     setErr("");
@@ -345,6 +345,7 @@ function ClientView({ schedules, bookings, reload }) {
     }
     await reload();
     setDone({ date: selDate, slot: selSlot, consultant, ...info });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   if (done) {
