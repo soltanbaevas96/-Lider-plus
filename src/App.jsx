@@ -10,17 +10,21 @@ const ADMIN_PIN = "2468"; // сменить при необходимости
 
 const GRADES = ["9 класс", "10 класс", "11 класс", "Колледж"];
 
+// Стоимость консультации в зависимости от наличия договора с центром
+const PRICE_NO_CONTRACT = "20 000 ₸";
+
 // Консультанты. id используется в ключах базы — латиницей, не менять после запуска.
 // whatsapp — номер в международном формате без + и пробелов (для ссылки wa.me).
+// address — вежливое обращение (имя-отчество) для сообщений в WhatsApp.
 const CONSULTANTS = [
-  { id: "symbat",   name: "Нурмади Сымбат Сунгаткызы",      short: "Сымбат",   role: "Профориентация", whatsapp: "77479048949" },
-  { id: "aigerim",  name: "Оразбекова Айгерим Алтынбековна", short: "Айгерим",  role: "Профориентация", whatsapp: "77778905810" },
+  { id: "symbat",   name: "Нұрмәди Сымбат Сұнғатқызы",        short: "Сымбат",   address: "Сымбат Сұнғатқызы",    role: "Профориентация", whatsapp: "77479048949" },
+  { id: "aigerim",  name: "Оразбекова Айгерим Алтынбековна", short: "Айгерим",  address: "Айгерим Алтынбековна", role: "Профориентация", whatsapp: "77778905810" },
 ];
 
 // Данные образовательного центра
 const CENTER = {
   name: "Лидер Плюс",
-  address: "ул. Академика Маргулана, 197/2, Павлодар (1–2 этаж)",
+  address: "ул. Академика Маргулана, 197/2, Павлодар (2 этаж, 1 дверь слева)",
   lat: 52.273132,
   lng: 76.944613,
   mapLink: "https://2gis.kz/pavlodar/firm/70000001104381000",
@@ -33,6 +37,12 @@ const isoDow = (d) => (d.getDay() + 6) % 7;
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const parseHM = (s) => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
 const toHM = (min) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+// Телефон → только цифры, в едином виде. 8XXX и 7XXX (Казахстан/Россия) приводятся к одному.
+const normPhone = (s) => {
+  let d = String(s || "").replace(/\D/g, "");
+  if (d.length === 11 && d[0] === "8") d = "7" + d.slice(1);
+  return d;
+};
 
 const DEFAULT_SCHEDULE = { workdays: { 0: true, 1: true, 2: true, 3: true, 4: true, 5: false, 6: false }, start: "10:00", end: "18:00" };
 
@@ -61,13 +71,13 @@ const db = {
     const o = {};
     (data || []).forEach(r => {
       const d = String(r.slot_date).slice(0, 10);   // "2026-06-22" даже если придёт со временем
-      o[`${r.consultant_id}|${d} ${r.slot_time}`] = { name: r.name, phone: r.phone, topic: r.topic, grade: r.grade };
+      o[`${r.consultant_id}|${d} ${r.slot_time}`] = { name: r.name, phone: r.phone, topic: r.topic, grade: r.grade, contract: r.contract };
     });
     return o;
   },
   async addBooking(cid, date, time, info) {
     if (!supaReady) { const b = local.get("bookings", {}); b[`${cid}|${date} ${time}`] = info; local.set("bookings", b); return { ok: true }; }
-    const { error } = await supabase.from("bookings").insert({ consultant_id: cid, slot_date: date, slot_time: time, name: info.name, phone: info.phone, topic: info.topic, grade: info.grade });
+    const { error } = await supabase.from("bookings").insert({ consultant_id: cid, slot_date: date, slot_time: time, name: info.name, phone: info.phone, topic: info.topic, grade: info.grade, contract: info.contract });
     return { ok: !error, error };
   },
   async delBooking(cid, date, time) {
@@ -127,6 +137,7 @@ export default function App() {
         <LogoWordmark />
         <div style={S.navTabs}>
           <button onClick={() => setView("client")} style={{ ...S.navTab, ...(view === "client" ? S.navTabActive : {}) }}>Запись</button>
+          <button onClick={() => setView("my")} style={{ ...S.navTab, ...(view === "my" ? S.navTabActive : {}) }}>Моя запись</button>
           <button onClick={() => setView("admin")} style={{ ...S.navTab, ...(view === "admin" ? S.navTabActive : {}) }}>Кабинет</button>
         </div>
       </header>
@@ -136,12 +147,78 @@ export default function App() {
       )}
 
       <main style={S.main}>
-        {view === "client"
-          ? <><ClientView schedules={schedules} bookings={bookings} reload={reload} /><OfficeBlock /></>
-          : <AdminView schedules={schedules} bookings={bookings} reload={reload} />}
+        {view === "client" && <><ClientView schedules={schedules} bookings={bookings} reload={reload} /><OfficeBlock /></>}
+        {view === "my" && <MyBookingView bookings={bookings} reload={reload} />}
+        {view === "admin" && <AdminView schedules={schedules} bookings={bookings} reload={reload} />}
       </main>
 
       <footer style={S.footer}>«Лидер Плюс» · Профориентация · запись онлайн</footer>
+    </div>
+  );
+}
+
+// ── «Моя запись»: поиск по телефону + отмена ──────────────────────────
+function MyBookingView({ bookings, reload }) {
+  const [phone, setPhone] = useState("");
+  const [searched, setSearched] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const now = new Date();
+  const query = normPhone(phone);
+  const found = !searched || query.length < 7 ? [] : Object.entries(bookings)
+    .filter(([, v]) => normPhone(v.phone) === query)
+    .map(([k, v]) => { const [cid, rest] = k.split("|"); const [date, slot] = rest.split(" "); return { cid, date, slot, ...v }; })
+    .filter(b => new Date(`${b.date}T${b.slot}`) >= now)
+    .sort((a, b) => (a.date + a.slot < b.date + b.slot ? -1 : 1));
+
+  const search = () => { if (normPhone(phone).length >= 7) setSearched(true); };
+
+  const cancel = async (b) => {
+    if (!window.confirm(`Отменить запись ${b.date.split("-").reverse().join(".")} в ${b.slot}?`)) return;
+    setBusy(true);
+    await db.delBooking(b.cid, b.date, b.slot);
+    await reload();
+    setBusy(false);
+  };
+
+  return (
+    <div style={S.cardCenter}>
+      <div style={S.stepHead}>Моя запись</div>
+      <p style={S.empty}>Введите номер телефона, который указывали при записи — покажем ваши записи.</p>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <input style={{ ...S.input, marginTop: 0, flex: 1 }} value={phone} placeholder="+7 ___ ___ __ __" inputMode="tel"
+          onChange={(e) => { setPhone(e.target.value); setSearched(false); }}
+          onKeyDown={(e) => e.key === "Enter" && search()} />
+        <button style={{ ...S.btnPrimary, width: "auto", padding: "11px 20px" }} onClick={search}>Найти</button>
+      </div>
+
+      {searched && (
+        <div style={{ marginTop: 20 }}>
+          {found.length === 0 ? (
+            <p style={S.empty}>Записей на этот номер не найдено. Проверьте номер или запишитесь на вкладке «Запись».</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {found.map((b, i) => {
+                const c = CONSULTANTS.find(x => x.id === b.cid);
+                const d = new Date(b.date + "T00:00");
+                return (
+                  <div key={i} style={S.bookRow}>
+                    <div style={S.bookWhen}>
+                      <div style={S.bookDate}>{d.getDate()} {MONTHS[d.getMonth()].slice(0, 3)}</div>
+                      <div style={S.bookTime}>{b.slot}</div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={S.bookName}>{c ? c.short : "Консультант"} {b.grade && <span style={S.gradeTag}>{b.grade}</span>}</div>
+                      <div style={S.bookTopic}>{c ? c.name : ""}</div>
+                    </div>
+                    <button style={S.cancelBtn} disabled={busy} onClick={() => cancel(b)} title="Отменить">✕</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -172,25 +249,24 @@ function OfficeBlock() {
   return (
     <section style={S.office}>
       <div style={S.officeHead}>Где проходят консультации</div>
-      <div style={S.officeGrid}>
-        <a href={CENTER.mapLink} target="_blank" rel="noopener noreferrer" style={S.mapWrap}>
-          <MapPin />
-          <span style={S.mapOverlay}>Открыть в 2ГИС</span>
-        </a>
-        <div style={S.officeInfo}>
-          <div style={S.officeAddrLabel}>Адрес</div>
-          <div style={S.officeAddr}>{CENTER.address}</div>
-          <a href={CENTER.routeLink} target="_blank" rel="noopener noreferrer" style={S.routeBtn}>Построить маршрут в 2ГИС</a>
+      <div style={S.officeInfo}>
+        <div style={S.officeAddrLabel}>Адрес</div>
+        <div style={S.officeAddr}>{CENTER.address}</div>
+        <a href={CENTER.routeLink} target="_blank" rel="noopener noreferrer" style={S.routeBtn}>Построить маршрут в 2ГИС</a>
 
-          <div style={{ ...S.officeAddrLabel, marginTop: 22 }}>WhatsApp консультантов</div>
-          {CONSULTANTS.map((c) => (
-            <a key={c.id} href={`https://wa.me/${c.whatsapp}`} target="_blank" rel="noopener noreferrer" style={S.waContact}>
-              <span style={S.waContactIcon}>✆</span>
-              <span><b>{c.short}</b><br /><span style={S.waContactNum}>+{c.whatsapp}</span></span>
-            </a>
-          ))}
-        </div>
+        <div style={{ ...S.officeAddrLabel, marginTop: 22 }}>WhatsApp консультантов</div>
+        {CONSULTANTS.map((c) => (
+          <a key={c.id} href={`https://wa.me/${c.whatsapp}`} target="_blank" rel="noopener noreferrer" style={S.waContact}>
+            <span style={S.waContactIcon}>✆</span>
+            <span><b>{c.address}</b><br /><span style={S.waContactNum}>+{c.whatsapp}</span></span>
+          </a>
+        ))}
       </div>
+
+      <a href={CENTER.mapLink} target="_blank" rel="noopener noreferrer" style={S.mapWrap}>
+        <MapPin />
+        <span style={S.mapOverlay}>Открыть карту в 2ГИС</span>
+      </a>
     </section>
   );
 }
@@ -206,6 +282,7 @@ function slotsForDate(date, schedule) {
 function ClientView({ schedules, bookings, reload }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const [cid, setCid] = useState(null);
+  const [contract, setContract] = useState(null); // "yes" | "no"
   const [grade, setGrade] = useState(null);
   const [selDate, setSelDate] = useState(null);
   const [selSlot, setSelSlot] = useState(null);
@@ -228,14 +305,15 @@ function ClientView({ schedules, bookings, reload }) {
   const isTaken = (d, slot) => !!bookings[`${cid}|${ymd(d)} ${slot}`];
   const isPast = (d, slot) => { const dt = new Date(d); const [h, m] = slot.split(":").map(Number); dt.setHours(h, m, 0, 0); return dt <= now; };
 
-  const reset = () => { setDone(null); setCid(null); setGrade(null); setSelDate(null); setSelSlot(null); setForm({ name: "", phone: "", topic: "" }); setErr(""); };
+  const reset = () => { setDone(null); setCid(null); setContract(null); setGrade(null); setSelDate(null); setSelSlot(null); setForm({ name: "", phone: "", topic: "" }); setErr(""); };
 
   const submit = async () => {
     setErr("");
+    if (contract !== "yes") return setErr("Запись через сайт доступна только при наличии договора.");
     if (!form.name.trim()) return setErr("Укажите имя");
     if (form.phone.replace(/\D/g, "").length < 7) return setErr("Укажите корректный телефон");
     setBusy(true);
-    const info = { name: form.name.trim(), phone: form.phone.trim(), topic: form.topic.trim(), grade };
+    const info = { name: form.name.trim(), phone: form.phone.trim(), topic: form.topic.trim(), grade, contract };
     const res = await db.addBooking(cid, ymd(selDate), selSlot, info);
     setBusy(false);
     if (!res.ok) {
@@ -252,10 +330,11 @@ function ClientView({ schedules, bookings, reload }) {
 
   if (done) {
     const waText = encodeURIComponent(
-      `Здравствуйте, ${done.consultant.short}!\n\n` +
+      `Здравствуйте, ${done.consultant.address}!\n\n` +
       `Записался(ась) на консультацию по профориентации.\n` +
       `Дата: ${done.date.getDate()} ${MONTHS[done.date.getMonth()]}, ${done.slot}\n` +
       `Класс: ${done.grade}\n` +
+      `Договор с Лидер Плюс: есть (бесплатно)\n` +
       `Имя: ${done.name}\n` +
       `Телефон: ${done.phone}` +
       (done.topic ? `\nЗапрос: ${done.topic}` : "")
@@ -279,6 +358,9 @@ function ClientView({ schedules, bookings, reload }) {
           <span style={S.waIcon}>✆</span> Подтвердить в WhatsApp
         </a>
         <button style={S.btnGhost} onClick={reset}>Записать ещё</button>
+        <div style={S.cancelHint}>
+          Нужно отменить запись? Откройте вкладку <b>«Моя запись»</b> наверху и введите номер, который вы указали при записи: <b>{done.phone}</b>.
+        </div>
       </div>
     );
   }
@@ -297,7 +379,7 @@ function ClientView({ schedules, bookings, reload }) {
           <div style={S.consGrid}>
             {CONSULTANTS.map((c) => (
               <button key={c.id}
-                onClick={() => { setCid(c.id); setSelDate(null); setSelSlot(null); setErr(""); }}
+                onClick={() => { setCid(c.id); setContract(null); setGrade(null); setSelDate(null); setSelSlot(null); setErr(""); }}
                 style={{ ...S.consBtn, ...(cid === c.id ? S.consBtnActive : {}) }}>
                 <span style={{ ...S.consAvatar, ...(cid === c.id ? { background: GOLD, color: INK } : {}) }}>
                   {c.short[0]}
@@ -309,9 +391,44 @@ function ClientView({ schedules, bookings, reload }) {
           </div>
         </section>
 
-        {/* Шаг 2 — класс */}
+        {/* Шаг 2 — договор */}
         <section style={{ ...S.card, ...dim(cid) }}>
-          <div style={S.stepHead}><span style={S.stepNum}>2</span> Учусь в классе</div>
+          <div style={S.stepHead}><span style={S.stepNum}>2</span> Договор с Лидер Плюс</div>
+          <p style={S.contractQ}>Заключён ли у вас договор с центром «Лидер Плюс» на обучение?</p>
+          <div style={S.gradeGrid}>
+            <button onClick={() => { setContract("yes"); setErr(""); }}
+              style={{ ...S.gradeBtn, ...(contract === "yes" ? S.gradeBtnActive : {}) }}>Да, есть</button>
+            <button onClick={() => { setContract("no"); setGrade(null); setSelDate(null); setSelSlot(null); setErr(""); }}
+              style={{ ...S.gradeBtn, ...(contract === "no" ? S.gradeBtnActive : {}) }}>Нет</button>
+          </div>
+
+          {contract === "yes" && (
+            <div style={{ ...S.priceBox, ...S.priceFree }}>Для вас консультация <b>бесплатно</b> — продолжайте запись ниже.</div>
+          )}
+
+          {contract === "no" && (
+            <div style={S.paidBlock}>
+              <div style={S.paidTitle}>Консультация платная</div>
+              <p style={S.paidText}>
+                Без договора с «Лидер Плюс» консультация проводится на платной основе.
+                Чтобы записаться и уточнить стоимость, свяжитесь напрямую с консультантом в WhatsApp:
+              </p>
+              {CONSULTANTS.map((c) => {
+                const text = encodeURIComponent(`Здравствуйте, ${c.address}, хочу записаться на платную консультацию.`);
+                return (
+                  <a key={c.id} href={`https://wa.me/${c.whatsapp}?text=${text}`} target="_blank" rel="noopener noreferrer" style={S.waContact}>
+                    <span style={S.waContactIcon}>✆</span>
+                    <span><b>{c.address}</b><br /><span style={S.waContactNum}>+{c.whatsapp}</span></span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Шаг 3 — класс (только при наличии договора) */}
+        <section style={{ ...S.card, ...dim(contract === "yes") }}>
+          <div style={S.stepHead}><span style={S.stepNum}>3</span> Учусь в классе</div>
           <div style={S.gradeGrid}>
             {GRADES.map((g) => (
               <button key={g} onClick={() => { setGrade(g); setErr(""); }}
@@ -320,9 +437,9 @@ function ClientView({ schedules, bookings, reload }) {
           </div>
         </section>
 
-        {/* Шаг 3 — день */}
+        {/* Шаг 4 — день */}
         <section style={{ ...S.card, ...dim(grade) }}>
-          <div style={S.stepHead}><span style={S.stepNum}>3</span> Выберите день</div>
+          <div style={S.stepHead}><span style={S.stepNum}>4</span> Выберите день</div>
           {schedule && days.length === 0 ? <p style={S.empty}>У консультанта пока нет свободных дней. Загляните позже.</p> : (
             <div style={S.dayList}>
               {days.map((d) => {
@@ -342,9 +459,9 @@ function ClientView({ schedules, bookings, reload }) {
           )}
         </section>
 
-        {/* Шаг 4 — слот */}
+        {/* Шаг 5 — слот */}
         <section style={{ ...S.card, ...dim(selDate) }}>
-          <div style={S.stepHead}><span style={S.stepNum}>4</span> Выберите время</div>
+          <div style={S.stepHead}><span style={S.stepNum}>5</span> Выберите время</div>
           {selDate && (
             <>
               <div style={S.legend}>
@@ -365,9 +482,9 @@ function ClientView({ schedules, bookings, reload }) {
           )}
         </section>
 
-        {/* Шаг 5 — данные */}
+        {/* Шаг 6 — данные */}
         <section style={{ ...S.card, ...dim(selSlot) }}>
-          <div style={S.stepHead}><span style={S.stepNum}>5</span> Ваши данные</div>
+          <div style={S.stepHead}><span style={S.stepNum}>6</span> Ваши данные</div>
           <label style={S.lab}>Имя
             <input style={S.input} value={form.name} placeholder="Имя и фамилия"
               onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -457,7 +574,10 @@ function BookingList({ cid, bookings, reload }) {
                   <div style={S.bookTime}>{b.slot}</div>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={S.bookName}>{b.name} {b.grade && <span style={S.gradeTag}>{b.grade}</span>}</div>
+                  <div style={S.bookName}>
+                    {b.name}
+                    {b.grade && <span style={S.gradeTag}>{b.grade}</span>}
+                  </div>
                   <a href={`tel:${b.phone}`} style={S.bookPhone}>{b.phone}</a>
                   {b.topic && <div style={S.bookTopic}>{b.topic}</div>}
                 </div>
@@ -581,6 +701,13 @@ const S = {
   confLabel: { fontSize: 13, color: "#9a9488", flex: "0 0 auto" },
   confValue: { fontSize: 14, fontWeight: 600, textAlign: "right" },
   confNote: { fontSize: 13, color: "#9a9488", textAlign: "center", lineHeight: 1.5, marginBottom: 16 },
+  cancelHint: { fontSize: 12.5, color: "#6b665a", textAlign: "center", lineHeight: 1.5, marginTop: 16, padding: "12px 14px", background: "#faf8f3", borderRadius: 11, border: "1px solid #ece8e0" },
+  contractQ: { fontSize: 14, color: "#4a4636", lineHeight: 1.45, marginBottom: 14 },
+  priceBox: { marginTop: 14, padding: "12px 14px", borderRadius: 11, fontSize: 14, textAlign: "center" },
+  priceFree: { background: "#e6f6ee", color: "#0a7a4a", border: "1px solid #b9e6cd" },
+  paidBlock: { marginTop: 16, padding: "16px", borderRadius: 12, background: "#fff4e6", border: "1px solid #f0dcb4" },
+  paidTitle: { fontSize: 15.5, fontWeight: 800, color: "#9a6a1a", marginBottom: 8 },
+  paidText: { fontSize: 13.5, color: "#7a5a2a", lineHeight: 1.5, marginBottom: 14 },
 
   consTabs: { display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" },
   consTab: { padding: "9px 18px", borderRadius: 11, border: "1.5px solid #ece8e0", background: "#fff", fontSize: 14, fontWeight: 700, color: "#9a9488", cursor: "pointer" },
@@ -603,12 +730,12 @@ const S = {
   dowChipOn: { background: INK, color: GOLD, borderColor: INK },
   hintBox: { fontSize: 12.5, color: "#9a9488", background: "#faf8f3", padding: "10px 13px", borderRadius: 10, margin: "4px 0 18px", lineHeight: 1.5 },
   savedNote: { textAlign: "center", color: "#0a7", fontSize: 13.5, fontWeight: 600, marginTop: 12 },
-  office: { maxWidth: 1080, margin: "8px auto 0", padding: "0 20px" },
+  office: { maxWidth: 560, margin: "8px auto 0", padding: "0 20px" },
   officeHead: { fontSize: 20, fontWeight: 800, letterSpacing: "-.02em", marginBottom: 16, textAlign: "center" },
   officeGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 18, alignItems: "stretch" },
-  mapWrap: { position: "relative", borderRadius: 18, overflow: "hidden", border: "1px solid #ece8e0", minHeight: 280, background: "#eee", display: "block", textDecoration: "none" },
-  mapFrame: { width: "100%", height: "100%", minHeight: 280, objectFit: "cover", border: "none", display: "block" },
-  mapOverlay: { position: "absolute", bottom: 12, right: 12, background: INK, color: GOLD, fontSize: 13, fontWeight: 700, padding: "8px 14px", borderRadius: 10 },
+  mapWrap: { position: "relative", borderRadius: 14, overflow: "hidden", border: "1px solid #ece8e0", height: 150, background: "#eee", display: "block", textDecoration: "none", marginTop: 14 },
+  mapFrame: { width: "100%", height: "100%", objectFit: "cover", border: "none", display: "block" },
+  mapOverlay: { position: "absolute", bottom: 10, right: 10, background: INK, color: GOLD, fontSize: 12.5, fontWeight: 700, padding: "7px 12px", borderRadius: 9 },
   officeInfo: { background: "#fff", borderRadius: 18, padding: 24, border: "1px solid #ece8e0", boxShadow: "0 2px 16px rgba(0,0,0,.04)" },
   officeAddrLabel: { fontSize: 12.5, fontWeight: 700, color: "#9a9488", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 6 },
   officeAddr: { fontSize: 16, fontWeight: 600, lineHeight: 1.4, marginBottom: 14 },
