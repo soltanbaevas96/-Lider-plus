@@ -8,8 +8,6 @@ const MONTHS = ["января", "февраля", "марта", "апреля", 
 const SLOT_MIN = 30;
 const ADMIN_PIN = "2468"; // сменить при необходимости
 
-const GRADES = ["9 класс", "10 класс", "11 класс", "Колледж"];
-
 // Стоимость консультации в зависимости от наличия договора с центром
 const PRICE_NO_CONTRACT = "20 000 ₸";
 
@@ -117,6 +115,7 @@ function LogoWordmark() {
       <div style={{ lineHeight: 1 }}>
         <div style={S.wmTop}>ЛИДЕР</div>
         <div style={S.wmBot}>ПЛЮС</div>
+        <div style={S.wmSlogan}>Будьте с нами, будьте лидером!</div>
       </div>
     </div>
   );
@@ -215,7 +214,7 @@ function MyBookingView({ bookings, reload }) {
                       <div style={S.bookTime}>{b.slot}</div>
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={S.bookName}>{c ? c.short : "Консультант"} {b.grade && <span style={S.gradeTag}>{b.grade}</span>}</div>
+                      <div style={S.bookName}>{c ? c.short : "Консультант"}</div>
                       <div style={S.bookTopic}>{c ? c.name : ""}</div>
                     </div>
                     <button style={S.cancelBtn} disabled={busy} onClick={() => cancel(b)} title="Отменить">✕</button>
@@ -299,13 +298,15 @@ function ClientView({ schedules, bookings, reload }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const [cid, setCid] = useState(null);
   const [contract, setContract] = useState(null); // "yes" | "no"
-  const [grade, setGrade] = useState(null);
   const [selDate, setSelDate] = useState(null);
   const [selSlot, setSelSlot] = useState(null);
   const [form, setForm] = useState({ name: "", phone: "", topic: "" });
   const [done, setDone] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // надёжная прокрутка наверх при показе экрана «Вы записаны» (работает и на мобильном)
+  useEffect(() => { if (done) window.scrollTo({ top: 0, behavior: "auto" }); }, [done]);
 
   const consultant = CONSULTANTS.find(c => c.id === cid);
   const schedule = cid ? schedules[cid] : null;
@@ -324,7 +325,7 @@ function ClientView({ schedules, bookings, reload }) {
   const isTaken = (d, slot) => !!bookings[`${cid}|${ymd(d)} ${slot}`];
   const isPast = (d, slot) => { const dt = new Date(d); const [h, m] = slot.split(":").map(Number); dt.setHours(h, m, 0, 0); return dt <= now; };
 
-  const reset = () => { setDone(null); setCid(null); setContract(null); setGrade(null); setSelDate(null); setSelSlot(null); setForm({ name: "", phone: "", topic: "" }); setErr(""); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const reset = () => { setDone(null); setCid(null); setContract(null); setSelDate(null); setSelSlot(null); setForm({ name: "", phone: "", topic: "" }); setErr(""); window.scrollTo({ top: 0, behavior: "auto" }); };
 
   const submit = async () => {
     setErr("");
@@ -332,7 +333,7 @@ function ClientView({ schedules, bookings, reload }) {
     if (!form.name.trim()) return setErr("Укажите имя");
     if (form.phone.replace(/\D/g, "").length < 7) return setErr("Укажите корректный телефон");
     setBusy(true);
-    const info = { name: form.name.trim(), phone: form.phone.trim(), topic: form.topic.trim(), grade, contract };
+    const info = { name: form.name.trim(), phone: form.phone.trim(), topic: form.topic.trim(), contract };
     const res = await db.addBooking(cid, ymd(selDate), selSlot, info);
     setBusy(false);
     if (!res.ok) {
@@ -345,7 +346,6 @@ function ClientView({ schedules, bookings, reload }) {
     }
     await reload();
     setDone({ date: selDate, slot: selSlot, consultant, ...info });
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   if (done) {
@@ -353,11 +353,11 @@ function ClientView({ schedules, bookings, reload }) {
       `Здравствуйте, ${done.consultant.address}!\n\n` +
       `Записался(ась) на консультацию по профориентации.\n` +
       `Дата: ${done.date.getDate()} ${MONTHS[done.date.getMonth()]}, ${done.slot}\n` +
-      `Класс: ${done.grade}\n` +
       `Договор с Лидер Плюс: есть (бесплатно)\n` +
       `Имя: ${done.name}\n` +
       `Телефон: ${done.phone}` +
-      (done.topic ? `\nЗапрос: ${done.topic}` : "")
+      (done.topic ? `\nЗапрос: ${done.topic}` : "") +
+      `\n\nПланирую прийти вместе с родителями.`
     );
     const waLink = `https://wa.me/${done.consultant.whatsapp}?text=${waText}`;
     return (
@@ -366,12 +366,15 @@ function ClientView({ schedules, bookings, reload }) {
         <h2 style={S.successTitle}>Вы записаны</h2>
         <div style={S.confBox}>
           <Row label="Консультант" value={done.consultant.name} />
-          <Row label="Класс" value={done.grade} />
           <Row label="Дата" value={`${DAYS_FULL[isoDow(done.date)]}, ${done.date.getDate()} ${MONTHS[done.date.getMonth()]}`} />
           <Row label="Время" value={`${done.slot} · 30 минут`} />
           <Row label="Имя" value={done.name} />
           <Row label="Телефон" value={done.phone} />
           {done.topic && <Row label="Запрос" value={done.topic} />}
+        </div>
+        <div style={S.reminderBox}>
+          <span style={S.reminderIcon}>★</span>
+          <span>Важно: на консультацию желательно приходить вместе с родителями.</span>
         </div>
         <p style={S.confNote}>Подтвердите запись в WhatsApp — консультант получит ваши данные.</p>
         <a href={waLink} target="_blank" rel="noopener noreferrer" style={S.btnWhatsapp}>
@@ -399,7 +402,7 @@ function ClientView({ schedules, bookings, reload }) {
           <div style={S.consGrid}>
             {CONSULTANTS.map((c) => (
               <button key={c.id}
-                onClick={() => { setCid(c.id); setContract(null); setGrade(null); setSelDate(null); setSelSlot(null); setErr(""); }}
+                onClick={() => { setCid(c.id); setContract(null); setSelDate(null); setSelSlot(null); setErr(""); }}
                 style={{ ...S.consBtn, ...(cid === c.id ? S.consBtnActive : {}) }}>
                 <span style={{ ...S.consAvatar, ...(cid === c.id ? { background: GOLD, color: INK } : {}) }}>
                   {c.short[0]}
@@ -418,7 +421,7 @@ function ClientView({ schedules, bookings, reload }) {
           <div style={S.gradeGrid}>
             <button onClick={() => { setContract("yes"); setErr(""); }}
               style={{ ...S.gradeBtn, ...(contract === "yes" ? S.gradeBtnActive : {}) }}>Да, есть</button>
-            <button onClick={() => { setContract("no"); setGrade(null); setSelDate(null); setSelSlot(null); setErr(""); }}
+            <button onClick={() => { setContract("no"); setSelDate(null); setSelSlot(null); setErr(""); }}
               style={{ ...S.gradeBtn, ...(contract === "no" ? S.gradeBtnActive : {}) }}>Нет</button>
           </div>
 
@@ -446,20 +449,9 @@ function ClientView({ schedules, bookings, reload }) {
           )}
         </section>
 
-        {/* Шаг 3 — класс (только при наличии договора) */}
+        {/* Шаг 3 — день */}
         <section style={{ ...S.card, ...dim(contract === "yes") }}>
-          <div style={S.stepHead}><span style={S.stepNum}>3</span> Учусь в классе</div>
-          <div style={S.gradeGrid}>
-            {GRADES.map((g) => (
-              <button key={g} onClick={() => { setGrade(g); setErr(""); }}
-                style={{ ...S.gradeBtn, ...(grade === g ? S.gradeBtnActive : {}) }}>{g}</button>
-            ))}
-          </div>
-        </section>
-
-        {/* Шаг 4 — день */}
-        <section style={{ ...S.card, ...dim(grade) }}>
-          <div style={S.stepHead}><span style={S.stepNum}>4</span> Выберите день</div>
+          <div style={S.stepHead}><span style={S.stepNum}>3</span> Выберите день</div>
           {schedule && days.length === 0 ? <p style={S.empty}>У консультанта пока нет свободных дней. Загляните позже.</p> : (
             <div style={S.dayList}>
               {days.map((d) => {
@@ -479,9 +471,9 @@ function ClientView({ schedules, bookings, reload }) {
           )}
         </section>
 
-        {/* Шаг 5 — слот */}
+        {/* Шаг 4 — слот */}
         <section style={{ ...S.card, ...dim(selDate) }}>
-          <div style={S.stepHead}><span style={S.stepNum}>5</span> Выберите время</div>
+          <div style={S.stepHead}><span style={S.stepNum}>4</span> Выберите время</div>
           {selDate && (
             <>
               <div style={S.legend}>
@@ -502,9 +494,9 @@ function ClientView({ schedules, bookings, reload }) {
           )}
         </section>
 
-        {/* Шаг 6 — данные */}
+        {/* Шаг 5 — данные */}
         <section style={{ ...S.card, ...dim(selSlot) }}>
-          <div style={S.stepHead}><span style={S.stepNum}>6</span> Ваши данные</div>
+          <div style={S.stepHead}><span style={S.stepNum}>5</span> Ваши данные</div>
           <label style={S.lab}>Имя
             <input style={S.input} value={form.name} placeholder="Имя и фамилия"
               onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -515,7 +507,7 @@ function ClientView({ schedules, bookings, reload }) {
           </label>
           <label style={S.lab}>Запрос / тема
             <textarea style={{ ...S.input, height: 72, resize: "vertical", fontFamily: "inherit" }}
-              value={form.topic} placeholder="Коротко: что хотите обсудить"
+              value={form.topic} placeholder="Например: выбор ВУЗа / профильного предмета, узнать про поступление"
               onChange={(e) => setForm({ ...form, topic: e.target.value })} />
           </label>
           {err && <div style={S.errBox}>{err}</div>}
@@ -750,6 +742,7 @@ const S = {
   wordmark: { display: "flex", alignItems: "center", gap: 13 },
   wmTop: { fontSize: 20, fontWeight: 800, fontStyle: "italic", color: "#fff", letterSpacing: "0.02em" },
   wmBot: { fontSize: 20, fontWeight: 800, fontStyle: "italic", color: "#fff", letterSpacing: "0.04em", marginTop: -2 },
+  wmSlogan: { fontSize: 10.5, fontWeight: 600, color: GOLD, marginTop: 4, letterSpacing: "0.01em" },
   navTabs: { display: "flex", gap: 4, background: "rgba(255,255,255,.1)", padding: 4, borderRadius: 12 },
   navTab: { border: "none", background: "transparent", padding: "8px 18px", borderRadius: 9, fontSize: 14, fontWeight: 600, color: "rgba(255,255,255,.6)", cursor: "pointer" },
   navTabActive: { background: GOLD, color: INK },
@@ -810,6 +803,8 @@ const S = {
   confLabel: { fontSize: 13, color: "#9a9488", flex: "0 0 auto" },
   confValue: { fontSize: 14, fontWeight: 600, textAlign: "right" },
   confNote: { fontSize: 13, color: "#9a9488", textAlign: "center", lineHeight: 1.5, marginBottom: 16 },
+  reminderBox: { display: "flex", alignItems: "flex-start", gap: 10, fontSize: 13.5, fontWeight: 600, color: "#7a5a1a", lineHeight: 1.45, marginBottom: 16, padding: "13px 15px", background: `${GOLD}1f`, borderRadius: 12, border: `1.5px solid ${GOLD}` },
+  reminderIcon: { color: GOLD, fontSize: 16, flex: "0 0 auto", marginTop: 1 },
   cancelHint: { fontSize: 12.5, color: "#6b665a", textAlign: "center", lineHeight: 1.5, marginTop: 16, padding: "12px 14px", background: "#faf8f3", borderRadius: 11, border: "1px solid #ece8e0" },
   contractQ: { fontSize: 14, color: "#4a4636", lineHeight: 1.45, marginBottom: 14 },
   priceBox: { marginTop: 14, padding: "12px 14px", borderRadius: 11, fontSize: 14, textAlign: "center" },
