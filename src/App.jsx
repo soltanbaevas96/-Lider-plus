@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Analytics } from "@vercel/analytics/react";
 import { supabase, supaReady } from "./supabase.js";
+import { PHOTO_SYMBAT, PHOTO_AIGERIM } from "./photos.js";
 
 // ── Данные ────────────────────────────────────────────────────────────
 const DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -16,8 +17,8 @@ const PRICE_NO_CONTRACT = "20 000 ₸";
 // whatsapp — номер в международном формате без + и пробелов (для ссылки wa.me).
 // address — вежливое обращение (имя-отчество) для сообщений в WhatsApp.
 const CONSULTANTS = [
-  { id: "symbat",   name: "Нұрмәди Сымбат Сұнғатқызы",        short: "Сымбат",   address: "Сымбат Сұнғатқызы",    role: "Профориентация", whatsapp: "77479048949" },
-  { id: "aigerim",  name: "Оразбекова Айгерим Алтынбековна", short: "Айгерим",  address: "Айгерим Алтынбековна", role: "Профориентация", whatsapp: "77778905810" },
+  { id: "symbat",   name: "Нұрмәди Сымбат Сұнғатқызы",        short: "Сымбат",   address: "Сымбат Сұнғатқызы",    role: "Профориентолог", whatsapp: "77479048949", photo: PHOTO_SYMBAT },
+  { id: "aigerim",  name: "Оразбекова Айгерим Алтынбековна", short: "Айгерим",  address: "Айгерим Алтынбековна", role: "Профориентолог", whatsapp: "77778905810", photo: PHOTO_AIGERIM },
 ];
 
 // Данные образовательного центра
@@ -403,17 +404,17 @@ function ClientView({ schedules, bookings, reload }) {
       <div style={S.clientGrid}>
         {/* Шаг 1 — консультант */}
         <section style={S.card}>
-          <div style={S.stepHead}><span style={S.stepNum}>1</span> Выберите консультанта</div>
+          <div style={S.stepHead}><span style={S.stepNum}>1</span> Выберите профориентолога</div>
           <div style={S.consGrid}>
             {CONSULTANTS.map((c) => (
               <button key={c.id}
                 onClick={() => { setCid(c.id); setContract(null); setSelDate(null); setSelSlot(null); setErr(""); }}
                 style={{ ...S.consBtn, ...(cid === c.id ? S.consBtnActive : {}) }}>
-                <span style={{ ...S.consAvatar, ...(cid === c.id ? { background: GOLD, color: INK } : {}) }}>
-                  {c.short[0]}
+                <img src={c.photo} alt={c.name} style={S.consPhoto} />
+                <span style={S.consText}>
+                  <span style={S.consName}>{c.name}</span>
+                  <span style={S.consRole}>{c.role}</span>
                 </span>
-                <span style={S.consName}>{c.name}</span>
-                <span style={S.consRole}>{c.role}</span>
               </button>
             ))}
           </div>
@@ -802,10 +803,11 @@ const S = {
   stepNum: { width: 26, height: 26, borderRadius: 8, background: INK, color: GOLD, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 13.5, fontWeight: 700, flex: "0 0 auto" },
 
   consGrid: { display: "flex", flexDirection: "column", gap: 11 },
-  consBtn: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3, padding: "15px 16px", borderRadius: 14, border: "1.5px solid #e6e1d6", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all .15s", position: "relative" },
+  consBtn: { display: "flex", flexDirection: "row", alignItems: "center", gap: 14, padding: "13px 15px", borderRadius: 14, border: "1.5px solid #e6e1d6", background: "#fff", cursor: "pointer", textAlign: "left", transition: "all .15s" },
   consBtnActive: { borderColor: INK, background: "#fbf8f2", boxShadow: `0 0 0 3px ${GOLD}44` },
-  consAvatar: { position: "absolute", top: 14, right: 14, width: 34, height: 34, borderRadius: "50%", background: "#efe9dd", color: "#8a6a3a", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15 },
-  consName: { fontSize: 15.5, fontWeight: 700, paddingRight: 40 },
+  consPhoto: { width: 56, height: 56, borderRadius: "50%", objectFit: "cover", flex: "0 0 auto", border: "2px solid #fff", boxShadow: "0 1px 4px rgba(0,0,0,.12)" },
+  consText: { display: "flex", flexDirection: "column", gap: 3, minWidth: 0 },
+  consName: { fontSize: 15.5, fontWeight: 700 },
   consRole: { fontSize: 12.5, color: "#9a9488" },
 
   gradeGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 },
