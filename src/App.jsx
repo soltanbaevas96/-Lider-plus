@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import { supabase, supaReady } from "./supabase.js";
 
 // ── Данные ────────────────────────────────────────────────────────────
@@ -159,6 +160,7 @@ export default function App() {
       </main>
 
       <footer style={S.footer}>«Лидер Плюс» · Профориентация · запись онлайн</footer>
+      <Analytics />
     </div>
   );
 }
