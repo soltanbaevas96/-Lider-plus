@@ -321,9 +321,11 @@ function ClientView({ schedules, bookings, reload }) {
   }
 
   const now = new Date();
+  const MIN_LEAD_MS = 4 * 60 * 60 * 1000; // запись не позже чем за 4 часа до начала
   const slots = selDate ? slotsForDate(selDate, schedule) : [];
   const isTaken = (d, slot) => !!bookings[`${cid}|${ymd(d)} ${slot}`];
-  const isPast = (d, slot) => { const dt = new Date(d); const [h, m] = slot.split(":").map(Number); dt.setHours(h, m, 0, 0); return dt <= now; };
+  // слот недоступен, если до него осталось меньше 4 часов (включая уже прошедшие)
+  const isPast = (d, slot) => { const dt = new Date(d); const [h, m] = slot.split(":").map(Number); dt.setHours(h, m, 0, 0); return dt.getTime() - now.getTime() < MIN_LEAD_MS; };
 
   const reset = () => { setDone(null); setCid(null); setContract(null); setSelDate(null); setSelSlot(null); setForm({ name: "", phone: "", topic: "" }); setErr(""); window.scrollTo({ top: 0, behavior: "auto" }); };
 
@@ -332,6 +334,7 @@ function ClientView({ schedules, bookings, reload }) {
     if (contract !== "yes") return setErr("Запись через сайт доступна только при наличии договора.");
     if (!form.name.trim()) return setErr("Укажите имя");
     if (form.phone.replace(/\D/g, "").length < 7) return setErr("Укажите корректный телефон");
+    if (selDate && selSlot && isPast(selDate, selSlot)) return setErr("До этого времени осталось меньше 4 часов. Выберите более позднее время.");
     setBusy(true);
     const info = { name: form.name.trim(), phone: form.phone.trim(), topic: form.topic.trim(), contract };
     const res = await db.addBooking(cid, ymd(selDate), selSlot, info);
@@ -563,13 +566,20 @@ function AdminView({ schedules, bookings, reload }) {
 }
 
 function BookingList({ cid, bookings, reload }) {
+  const [tab, setTab] = useState("upcoming"); // upcoming | archive
   const now = new Date();
-  const list = Object.entries(bookings)
+  const all = Object.entries(bookings)
     .filter(([k]) => k.startsWith(`${cid}|`))
-    .map(([k, v]) => { const [, rest] = k.split("|"); const [date, slot] = rest.split(" "); return { date, slot, ...v }; })
+    .map(([k, v]) => { const [, rest] = k.split("|"); const [date, slot] = rest.split(" "); return { date, slot, ...v }; });
+
+  const upcoming = all
     .filter(b => new Date(`${b.date}T${b.slot}`) >= now)
     .sort((a, b) => (a.date + a.slot < b.date + b.slot ? -1 : 1));
+  const archive = all
+    .filter(b => new Date(`${b.date}T${b.slot}`) < now)
+    .sort((a, b) => (a.date + a.slot > b.date + b.slot ? -1 : 1)); // новые сверху
 
+  const list = tab === "upcoming" ? upcoming : archive;
   const cancel = async (b) => { await db.delBooking(cid, b.date, b.slot); await reload(); };
 
   const consultant = CONSULTANTS.find(c => c.id === cid);
@@ -588,13 +598,23 @@ function BookingList({ cid, bookings, reload }) {
 
   return (
     <div style={S.card}>
-      <div style={S.stepHead}>Предстоящие консультации {list.length ? `(${list.length})` : ""}</div>
-      {list.length === 0 ? <p style={S.empty}>Пока никто не записан.</p> : (
+      <div style={S.listTabs}>
+        <button onClick={() => setTab("upcoming")} style={{ ...S.listTab, ...(tab === "upcoming" ? S.listTabOn : {}) }}>
+          Предстоящие {upcoming.length ? `(${upcoming.length})` : ""}
+        </button>
+        <button onClick={() => setTab("archive")} style={{ ...S.listTab, ...(tab === "archive" ? S.listTabOn : {}) }}>
+          Архив {archive.length ? `(${archive.length})` : ""}
+        </button>
+      </div>
+      {list.length === 0 ? (
+        <p style={S.empty}>{tab === "upcoming" ? "Пока никто не записан." : "Архив пуст — прошедших консультаций ещё нет."}</p>
+      ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {list.map((b, i) => {
             const d = new Date(b.date + "T00:00");
+            const isArchive = tab === "archive";
             return (
-              <div key={i} style={S.bookRow}>
+              <div key={i} style={{ ...S.bookRow, ...(isArchive ? S.bookRowArchive : {}) }}>
                 <div style={S.bookWhen}>
                   <div style={S.bookDate}>{d.getDate()} {MONTHS[d.getMonth()].slice(0, 3)}</div>
                   <div style={S.bookTime}>{b.slot}</div>
@@ -607,10 +627,12 @@ function BookingList({ cid, bookings, reload }) {
                   <a href={`tel:${b.phone}`} style={S.bookPhone}>{b.phone}</a>
                   {b.topic && <div style={S.bookTopic}>{b.topic}</div>}
                 </div>
-                <div style={S.bookActions}>
-                  <a href={remindLink(b)} target="_blank" rel="noopener noreferrer" style={S.remindBtn} title="Напомнить в WhatsApp">✆</a>
-                  <button style={S.cancelBtn} onClick={() => cancel(b)} title="Отменить">✕</button>
-                </div>
+                {!isArchive && (
+                  <div style={S.bookActions}>
+                    <a href={remindLink(b)} target="_blank" rel="noopener noreferrer" style={S.remindBtn} title="Напомнить в WhatsApp">✆</a>
+                    <button style={S.cancelBtn} onClick={() => cancel(b)} title="Отменить">✕</button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -837,6 +859,10 @@ const S = {
   subTab: { padding: "9px 18px", borderRadius: 11, border: "1.5px solid #ece8e0", background: "#fff", fontSize: 14, fontWeight: 600, color: "#9a9488", cursor: "pointer" },
   subTabActive: { background: INK, color: GOLD, borderColor: INK },
   bookRow: { display: "flex", alignItems: "center", gap: 14, padding: 13, borderRadius: 13, background: "#faf8f3", border: "1px solid #ece8e0" },
+  bookRowArchive: { opacity: 0.7, background: "#f5f3ee" },
+  listTabs: { display: "flex", gap: 8, marginBottom: 18 },
+  listTab: { flex: 1, padding: "10px 12px", borderRadius: 11, border: "1.5px solid #ece8e0", background: "#fff", fontSize: 13.5, fontWeight: 700, color: "#9a9488", cursor: "pointer" },
+  listTabOn: { background: INK, color: GOLD, borderColor: INK },
   bookWhen: { textAlign: "center", flex: "0 0 auto", minWidth: 48 },
   bookDate: { fontSize: 12.5, color: "#9a9488", fontWeight: 600 },
   bookTime: { fontSize: 17, fontWeight: 700, color: INK },
