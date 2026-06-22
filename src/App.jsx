@@ -8,7 +8,13 @@ const DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const DAYS_FULL = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
 const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const SLOT_MIN = 30;
-const ADMIN_PIN = "2468"; // сменить при необходимости
+// PIN-коды кабинета. Личный код открывает только своего консультанта,
+// админский — обоих. Меняйте значения при необходимости.
+const PINS = {
+  "0112": { role: "symbat" },   // Сымбат — видит только свои записи
+  "2468": { role: "aigerim" },  // Айгерим — видит только свои записи
+  "0608": { role: "admin" },    // Админ — видит обеих
+};
 
 // Стоимость консультации в зависимости от наличия договора с центром
 const PRICE_NO_CONTRACT = "20 000 ₸";
@@ -528,42 +534,59 @@ const dim = (cond) => cond ? {} : { opacity: 0.45, pointerEvents: "none" };
 
 // ── АДМИН ─────────────────────────────────────────────────────────────
 function AdminView({ schedules, bookings, reload }) {
-  const [authed, setAuthed] = useState(false);
+  const [role, setRole] = useState(null);  // null | "symbat" | "aigerim" | "admin"
   const [pin, setPin] = useState("");
+  const [badPin, setBadPin] = useState(false);
   const [cid, setCid] = useState(CONSULTANTS[0].id);
   const [tab, setTab] = useState("list");
 
-  if (!authed) {
+  const tryLogin = () => {
+    const entry = PINS[pin];
+    if (!entry) { setBadPin(true); return; }
+    setRole(entry.role);
+    setBadPin(false);
+    if (entry.role !== "admin") setCid(entry.role); // личный вход — фиксируем своего консультанта
+  };
+
+  if (!role) {
     return (
       <div style={S.cardCenter}>
         <div style={S.stepHead}>Вход в кабинет</div>
-        <p style={S.empty}>Введите PIN для доступа к записям и расписанию.</p>
+        <p style={S.empty}>Введите ваш PIN для доступа к записям и расписанию.</p>
         <input style={{ ...S.input, marginTop: 14 }} type="password" inputMode="numeric" placeholder="PIN"
-          value={pin} onChange={(e) => setPin(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && setAuthed(pin === ADMIN_PIN)} />
-        <button style={{ ...S.btnPrimary, marginTop: 12 }} onClick={() => setAuthed(pin === ADMIN_PIN)}>Войти</button>
-        {pin.length >= 4 && pin !== ADMIN_PIN && <div style={S.errBox}>Неверный PIN</div>}
+          value={pin} onChange={(e) => { setPin(e.target.value); setBadPin(false); }}
+          onKeyDown={(e) => e.key === "Enter" && tryLogin()} />
+        <button style={{ ...S.btnPrimary, marginTop: 12 }} onClick={tryLogin}>Войти</button>
+        {badPin && pin.length >= 4 && <div style={S.errBox}>Неверный PIN</div>}
       </div>
     );
   }
 
+  const isAdmin = role === "admin";
+  const activeCid = isAdmin ? cid : role;
+  const me = CONSULTANTS.find(c => c.id === activeCid);
+
   return (
     <div>
-      <div style={S.consTabs}>
-        {CONSULTANTS.map(c => (
-          <button key={c.id} onClick={() => setCid(c.id)} style={{ ...S.consTab, ...(cid === c.id ? S.consTabActive : {}) }}>
-            {c.short}
-          </button>
-        ))}
-      </div>
+      {isAdmin ? (
+        <div style={S.consTabs}>
+          {CONSULTANTS.map(c => (
+            <button key={c.id} onClick={() => setCid(c.id)} style={{ ...S.consTab, ...(cid === c.id ? S.consTabActive : {}) }}>
+              {c.short}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div style={S.cabHeader}>Кабинет: <b>{me ? me.short : ""}</b></div>
+      )}
       <div style={S.adminTabs}>
         <button onClick={() => setTab("list")} style={{ ...S.subTab, ...(tab === "list" ? S.subTabActive : {}) }}>Записи</button>
         <button onClick={() => setTab("settings")} style={{ ...S.subTab, ...(tab === "settings" ? S.subTabActive : {}) }}>Расписание</button>
       </div>
 
       {tab === "list"
-        ? <BookingList cid={cid} bookings={bookings} reload={reload} />
-        : <SettingsView cid={cid} schedule={schedules[cid]} reload={reload} />}
+        ? <BookingList cid={activeCid} bookings={bookings} reload={reload} />
+        : <SettingsView cid={activeCid} schedule={schedules[activeCid]} reload={reload} />}
     </div>
   );
 }
@@ -857,6 +880,7 @@ const S = {
   paidText: { fontSize: 13.5, color: "#7a5a2a", lineHeight: 1.5, marginBottom: 14 },
 
   consTabs: { display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" },
+  cabHeader: { fontSize: 15, fontWeight: 600, color: "#4a4636", marginBottom: 12, padding: "10px 14px", background: "#faf8f3", borderRadius: 11, border: "1px solid #ece8e0" },
   consTab: { padding: "9px 18px", borderRadius: 11, border: "1.5px solid #ece8e0", background: "#fff", fontSize: 14, fontWeight: 700, color: "#9a9488", cursor: "pointer" },
   consTabActive: { background: GOLD, color: INK, borderColor: GOLD },
   adminTabs: { display: "flex", gap: 8, marginBottom: 18 },
