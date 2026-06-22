@@ -572,6 +572,20 @@ function BookingList({ cid, bookings, reload }) {
 
   const cancel = async (b) => { await db.delBooking(cid, b.date, b.slot); await reload(); };
 
+  const consultant = CONSULTANTS.find(c => c.id === cid);
+  const remindLink = (b) => {
+    const d = new Date(b.date + "T00:00");
+    const dateStr = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+    const text = encodeURIComponent(
+      `Здравствуйте, ${b.name}! Напоминаем о консультации по профориентации в центре «Лидер Плюс».\n\n` +
+      `Дата: ${dateStr}, ${b.slot}\n` +
+      `Адрес: ${CENTER.address}\n` +
+      `Консультант: ${consultant ? consultant.address : ""}\n\n` +
+      `Желательно прийти вместе с родителями. До встречи!`
+    );
+    return `https://wa.me/${normPhone(b.phone)}?text=${text}`;
+  };
+
   return (
     <div style={S.card}>
       <div style={S.stepHead}>Предстоящие консультации {list.length ? `(${list.length})` : ""}</div>
@@ -593,7 +607,10 @@ function BookingList({ cid, bookings, reload }) {
                   <a href={`tel:${b.phone}`} style={S.bookPhone}>{b.phone}</a>
                   {b.topic && <div style={S.bookTopic}>{b.topic}</div>}
                 </div>
-                <button style={S.cancelBtn} onClick={() => cancel(b)} title="Отменить">✕</button>
+                <div style={S.bookActions}>
+                  <a href={remindLink(b)} target="_blank" rel="noopener noreferrer" style={S.remindBtn} title="Напомнить в WhatsApp">✆</a>
+                  <button style={S.cancelBtn} onClick={() => cancel(b)} title="Отменить">✕</button>
+                </div>
               </div>
             );
           })}
@@ -828,6 +845,8 @@ const S = {
   bookPhone: { fontSize: 13.5, color: "#8a6a3a", textDecoration: "none", fontWeight: 600 },
   bookTopic: { fontSize: 13, color: "#6b665a", marginTop: 3, lineHeight: 1.4 },
   cancelBtn: { width: 32, height: 32, borderRadius: 9, border: "1.5px solid #f0d4d0", background: "#fff", color: "#c0392b", fontSize: 14, cursor: "pointer", flex: "0 0 auto" },
+  bookActions: { display: "flex", gap: 7, flex: "0 0 auto" },
+  remindBtn: { width: 32, height: 32, borderRadius: 9, border: "1.5px solid #cdeed7", background: "#f3faf5", color: "#1a8a45", fontSize: 15, cursor: "pointer", flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" },
 
   monthNav: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14 },
   monthBtn: { padding: "8px 12px", borderRadius: 10, border: "1.5px solid #e4e0d8", background: "#fff", fontSize: 13, fontWeight: 600, color: INK, cursor: "pointer" },
