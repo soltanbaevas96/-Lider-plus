@@ -192,6 +192,24 @@ function MyBookingView({ bookings, reload }) {
     if (!window.confirm(`Отменить запись ${b.date.split("-").reverse().join(".")} в ${b.slot}?`)) return;
     setBusy(true);
     await db.delBooking(b.cid, b.date, b.slot);
+
+    // уведомление консультанту об отмене (не блокирует отмену при ошибке)
+    try {
+      const d = new Date(b.date + "T00:00");
+      const dateStr = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+      const msg =
+        `<b>❌ Отмена записи</b>\n` +
+        `Дата: ${dateStr}, ${b.slot}\n` +
+        `Клиент: ${b.name}\n` +
+        `Телефон: ${b.phone}\n\n` +
+        `Слот снова свободен.`;
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consultant_id: b.cid, text: msg }),
+      }).catch(() => {});
+    } catch { /* уведомление не критично */ }
+
     await reload();
     setBusy(false);
   };
@@ -357,6 +375,23 @@ function ClientView({ schedules, bookings, reload }) {
         : "Не удалось записаться, проверьте интернет и попробуйте ещё раз.");
     }
     await reload();
+
+    // уведомление консультанту в Telegram (не блокирует запись при ошибке)
+    try {
+      const dateStr = `${selDate.getDate()} ${MONTHS[selDate.getMonth()]}`;
+      const msg =
+        `<b>Новая запись — ${consultant.short}</b>\n` +
+        `Дата: ${dateStr}, ${selSlot}\n` +
+        `Имя: ${info.name}\n` +
+        `Телефон: ${info.phone}` +
+        (info.topic ? `\nЗапрос: ${info.topic}` : "");
+      fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consultant_id: cid, text: msg }),
+      }).catch(() => {});
+    } catch { /* уведомление не критично */ }
+
     setDone({ date: selDate, slot: selSlot, consultant, ...info });
   };
 
